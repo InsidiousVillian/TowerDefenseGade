@@ -1,0 +1,37 @@
+# Unreal Engine
+
+# Visual Studio / IDE
+.vs/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+.idea/
+*.code-workspace
+
+# Binary files
+Binaries/
+Plugins/**/Binaries/
+
+# Intermediate / generated
+Intermediate/
+Plugins/**/Intermediate/
+
+# Editor cache and local data
+DerivedDataCache/
+Saved/
+
+# Builds
+Build/
+
+# Built data for maps
+*_BuiltData.uasset
+
+# Crash dumps and logs
+*.dmp
+*.log
