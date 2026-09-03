@@ -32,6 +32,9 @@ Build/
 # Built data for maps
 *_BuiltData.uasset
 
+# Marketplace demo map exceeds GitHub's 100MB file limit
+Content/Stylized_PBR_Nature/Maps/Stylized_Nature_ExampleScene.umap
+
 # Crash dumps and logs
 *.dmp
 *.log
