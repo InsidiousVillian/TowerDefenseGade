@@ -10,7 +10,8 @@ public class Towerdefense_GADE : ModuleRules
 		{
 			"Core",
 			"CoreUObject",
-			"Engine"
+			"Engine",
+			"UMG"
 		});
 	}
 }
