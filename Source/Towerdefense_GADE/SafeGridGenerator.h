@@ -33,8 +33,12 @@ public:
 protected:
 	void ClearBlueprintSpawnTimer();
 	void EnsureSafeSpawnTimer();
+	void SeparateSpawnFromExit();
 	float GetSpawnInterval() const;
 	USplineComponent* GetPathSpline() const;
+	int32 ReadIntProperty(FName PropertyName, int32 Fallback) const;
+	double ReadDoubleProperty(FName PropertyName, double Fallback) const;
+	void WriteVector2DArray(FName PropertyName, const TArray<FVector2D>& Values);
 	FArrayProperty* FindEnemyClassesProperty() const;
 	UClass* GetClassAt(FArrayProperty* ArrayProp, FScriptArrayHelper& Helper, int32 Index) const;
 

@@ -1,6 +1,9 @@
 #include "SafeGridGenerator.h"
 
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SplineComponent.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "UObject/UnrealType.h"
 
@@ -15,6 +18,7 @@ void ASafeGridGenerator::BeginPlay()
 {
 	Super::BeginPlay();
 	ClearBlueprintSpawnTimer();
+	SeparateSpawnFromExit();
 }
 
 void ASafeGridGenerator::Tick(float DeltaSeconds)
@@ -198,5 +202,233 @@ void ASafeGridGenerator::RunSafeSpawn()
 	if (FObjectProperty* SplineProp = FindFProperty<FObjectProperty>(Spawned->GetClass(), FName(TEXT("TargetSpline"))))
 	{
 		SplineProp->SetObjectPropertyValue_InContainer(Spawned, Spline);
+	}
+}
+
+int32 ASafeGridGenerator::ReadIntProperty(const FName PropertyName, const int32 Fallback) const
+{
+	if (const FIntProperty* Prop = FindFProperty<FIntProperty>(GetClass(), PropertyName))
+	{
+		return Prop->GetPropertyValue_InContainer(this);
+	}
+	return Fallback;
+}
+
+double ASafeGridGenerator::ReadDoubleProperty(const FName PropertyName, const double Fallback) const
+{
+	if (const FDoubleProperty* Prop = FindFProperty<FDoubleProperty>(GetClass(), PropertyName))
+	{
+		return Prop->GetPropertyValue_InContainer(this);
+	}
+	if (const FFloatProperty* Prop = FindFProperty<FFloatProperty>(GetClass(), PropertyName))
+	{
+		return Prop->GetPropertyValue_InContainer(this);
+	}
+	return Fallback;
+}
+
+void ASafeGridGenerator::WriteVector2DArray(const FName PropertyName, const TArray<FVector2D>& Values)
+{
+	FArrayProperty* ArrayProp = FindFProperty<FArrayProperty>(GetClass(), PropertyName);
+	if (!ArrayProp || !CastField<FStructProperty>(ArrayProp->Inner))
+	{
+		return;
+	}
+
+	FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(this));
+	Helper.Resize(Values.Num());
+	for (int32 Index = 0; Index < Values.Num(); ++Index)
+	{
+		*reinterpret_cast<FVector2D*>(Helper.GetRawPtr(Index)) = Values[Index];
+	}
+}
+
+void ASafeGridGenerator::SeparateSpawnFromExit()
+{
+	const int32 Width = FMath::Max(1, ReadIntProperty(TEXT("GridWidth"), 1));
+	const int32 Height = FMath::Max(1, ReadIntProperty(TEXT("GridHeight"), 1));
+	const double TileSize = FMath::Max(1.0, ReadDoubleProperty(TEXT("TileSize"), 100.0));
+
+	TArray<FVector2D> Path;
+	auto TryWalk = [&]() -> bool
+	{
+		Path.Reset();
+		TSet<FIntPoint> Occupied;
+		FIntPoint Current(0, FMath::RandRange(0, Height - 1));
+		Path.Add(FVector2D(Current.X, Current.Y));
+		Occupied.Add(Current);
+
+		const int32 MaxSteps = Width * Height;
+		for (int32 Step = 0; Current.X < Width - 1 && Step < MaxSteps; ++Step)
+		{
+			TArray<FIntPoint> Options;
+			const FIntPoint Deltas[] = { FIntPoint(1, 0), FIntPoint(0, 1), FIntPoint(0, -1) };
+			for (const FIntPoint& Delta : Deltas)
+			{
+				const FIntPoint Next = Current + Delta;
+				if (Next.X < 0 || Next.X >= Width || Next.Y < 0 || Next.Y >= Height)
+				{
+					continue;
+				}
+				if (Occupied.Contains(Next))
+				{
+					continue;
+				}
+				Options.Add(Next);
+			}
+
+			if (Options.Num() == 0)
+			{
+				return false;
+			}
+
+			FIntPoint Chosen = Options[FMath::RandRange(0, Options.Num() - 1)];
+			if (FMath::FRand() < 0.65f)
+			{
+				for (const FIntPoint& Option : Options)
+				{
+					if (Option.X > Current.X)
+					{
+						Chosen = Option;
+						break;
+					}
+				}
+			}
+
+			Current = Chosen;
+			Path.Add(FVector2D(Current.X, Current.Y));
+			Occupied.Add(Current);
+		}
+
+		return Path.Num() > 0 && FMath::IsNearlyEqual(Path.Last().X, static_cast<double>(Width - 1));
+	};
+
+	bool bReachedFarEdge = false;
+	for (int32 Attempt = 0; Attempt < 32 && !bReachedFarEdge; ++Attempt)
+	{
+		bReachedFarEdge = TryWalk();
+	}
+
+	if (!bReachedFarEdge)
+	{
+		Path.Reset();
+		const int32 Row = FMath::RandRange(0, Height - 1);
+		for (int32 X = 0; X < Width; ++X)
+		{
+			Path.Add(FVector2D(X, Row));
+		}
+	}
+
+	WriteVector2DArray(TEXT("PathGridCoords"), Path);
+	WriteVector2DArray(TEXT("OccupiedCoords"), Path);
+
+	auto FindISM = [this](const TCHAR* NameFragment) -> UInstancedStaticMeshComponent*
+	{
+		TArray<UInstancedStaticMeshComponent*> Components;
+		GetComponents(Components);
+		for (UInstancedStaticMeshComponent* Component : Components)
+		{
+			if (Component && Component->GetName().Contains(NameFragment))
+			{
+				return Component;
+			}
+		}
+		return nullptr;
+	};
+
+	UInstancedStaticMeshComponent* Entrance = FindISM(TEXT("Entrance"));
+	UInstancedStaticMeshComponent* Exit = FindISM(TEXT("Exit"));
+	UInstancedStaticMeshComponent* PathMesh = FindISM(TEXT("ISM_Path"));
+	UInstancedStaticMeshComponent* Obstacle = FindISM(TEXT("Obstacle"));
+	for (UInstancedStaticMeshComponent* Mesh : { Entrance, Exit, PathMesh, Obstacle })
+	{
+		if (Mesh)
+		{
+			Mesh->ClearInstances();
+		}
+	}
+
+	UClass* SocketClass = LoadClass<AActor>(nullptr, TEXT("/Game/Blueprints/BP_BuildSocket.BP_BuildSocket_C"));
+	if (SocketClass)
+	{
+		TArray<AActor*> ExistingSockets;
+		UGameplayStatics::GetAllActorsOfClass(this, SocketClass, ExistingSockets);
+		for (AActor* Socket : ExistingSockets)
+		{
+			if (IsValid(Socket))
+			{
+				Socket->Destroy();
+			}
+		}
+	}
+
+	auto GridToWorld = [TileSize](const FVector2D& Coord)
+	{
+		return FVector(Coord.X * TileSize, Coord.Y * TileSize, 0.0);
+	};
+
+	for (int32 Index = 0; Index < Path.Num(); ++Index)
+	{
+		const FTransform InstanceTransform(GridToWorld(Path[Index]));
+		UInstancedStaticMeshComponent* Target = PathMesh;
+		if (Index == 0)
+		{
+			Target = Entrance;
+		}
+		else if (Index == Path.Num() - 1)
+		{
+			Target = Exit;
+		}
+		if (Target)
+		{
+			Target->AddInstance(InstanceTransform, false);
+		}
+	}
+
+	TSet<FIntPoint> Occupied;
+	for (const FVector2D& Coord : Path)
+	{
+		Occupied.Add(FIntPoint(FMath::RoundToInt(Coord.X), FMath::RoundToInt(Coord.Y)));
+	}
+
+	UWorld* World = GetWorld();
+	for (int32 X = 0; X < Width; ++X)
+	{
+		for (int32 Y = 0; Y < Height; ++Y)
+		{
+			if (Occupied.Contains(FIntPoint(X, Y)))
+			{
+				continue;
+			}
+
+			const FVector Location = GridToWorld(FVector2D(X, Y));
+			if (FMath::FRand() <= 0.3f)
+			{
+				if (Obstacle)
+				{
+					Obstacle->AddInstance(FTransform(Location), false);
+				}
+			}
+			else if (World && SocketClass)
+			{
+				World->SpawnActor<AActor>(SocketClass, FTransform(Location));
+			}
+		}
+	}
+
+	if (USplineComponent* Spline = GetPathSpline())
+	{
+		Spline->ClearSplinePoints(false);
+		for (const FVector2D& Coord : Path)
+		{
+			Spline->AddSplinePoint(GridToWorld(Coord), ESplineCoordinateSpace::World, false);
+		}
+		Spline->UpdateSpline();
+	}
+
+	if (Path.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Path crosses the map from (%.0f, %.0f) to (%.0f, %.0f), %d tiles."),
+			Path[0].X, Path[0].Y, Path.Last().X, Path.Last().Y, Path.Num());
 	}
 }
