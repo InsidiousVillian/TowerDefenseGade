@@ -54,6 +54,6 @@ protected:
 
 	FTimerHandle SafeFireTimerHandle;
 
-	/** Fire rate cached once in BeginPlay so each shot does not re-read the Blueprint property. */
+	/** Last FireRate used to arm the looping timer. Re-checked each shot in RunSafeFire. */
 	float CachedFireRate = 1.0f;
 };

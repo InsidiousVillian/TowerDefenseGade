@@ -195,6 +195,23 @@ void ASafeTowerBase::RunSafeFire()
 {
 	ClearBlueprintFireTimer();
 
+	// Re-read FireRate every shot so Blueprint changes (buffs, upgrades) take effect.
+	const float NewFireRate = ReadBlueprintFireRate();
+	if (!FMath::IsNearlyEqual(NewFireRate, CachedFireRate))
+	{
+		CachedFireRate = NewFireRate;
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(SafeFireTimerHandle);
+			World->GetTimerManager().SetTimer(
+				SafeFireTimerHandle,
+				this,
+				&ASafeTowerBase::RunSafeFire,
+				CachedFireRate,
+				true);
+		}
+	}
+
 	FArrayProperty* ArrayProp = FindTargetArrayProperty();
 	if (!ArrayProp)
 	{
