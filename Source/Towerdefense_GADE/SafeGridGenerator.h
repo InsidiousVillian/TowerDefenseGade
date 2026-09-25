@@ -10,6 +10,7 @@ class USplineComponent;
  * Native parent for BP_GridGenerator.
  * Clears the Blueprint CS_SpawnEnemy timer and spawns with a Length-1
  * Enemyclasses pick so RandomIntegerInRange(0, 3) cannot read past the array.
+ * Prefers AEnemyBase::SetFollowSpline over writing TargetSpline by name.
  */
 UCLASS()
 class TOWERDEFENSE_GADE_API ASafeGridGenerator : public AActor

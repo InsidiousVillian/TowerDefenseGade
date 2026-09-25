@@ -1,5 +1,6 @@
 #include "SafeTowerBase.h"
 
+#include "EnemyBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "UObject/UnrealType.h"
@@ -14,6 +15,10 @@ ASafeTowerBase::ASafeTowerBase()
 void ASafeTowerBase::BeginPlay()
 {
 	Super::BeginPlay();
+
+	TowerHealth = MaxTowerHealth;
+	CachedFireRate = ReadBlueprintFireRate();
+
 	ClearBlueprintFireTimer();
 	EnsureSafeFireTimer();
 }
@@ -39,6 +44,25 @@ void ASafeTowerBase::Destroyed()
 	Super::Destroyed();
 }
 
+float ASafeTowerBase::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+	AController* EventInstigator, AActor* DamageCauser)
+{
+	const float Actual = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (Actual <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	TowerHealth -= Actual;
+	if (TowerHealth <= 0.0f)
+	{
+		TowerHealth = 0.0f;
+		Destroy();
+	}
+
+	return Actual;
+}
+
 void ASafeTowerBase::ClearBlueprintFireTimer()
 {
 	FStructProperty* HandleProp = FindFProperty<FStructProperty>(GetClass(), FName(TEXT("FireTimerHandle")));
@@ -59,7 +83,7 @@ void ASafeTowerBase::ClearBlueprintFireTimer()
 	}
 }
 
-float ASafeTowerBase::GetBlueprintFireRate() const
+float ASafeTowerBase::ReadBlueprintFireRate() const
 {
 	if (const FDoubleProperty* RateProp = FindFProperty<FDoubleProperty>(GetClass(), FName(TEXT("FireRate"))))
 	{
@@ -91,7 +115,7 @@ void ASafeTowerBase::EnsureSafeFireTimer()
 		SafeFireTimerHandle,
 		this,
 		&ASafeTowerBase::RunSafeFire,
-		GetBlueprintFireRate(),
+		CachedFireRate,
 		true);
 }
 
@@ -141,13 +165,19 @@ void ASafeTowerBase::RemoveActorFromTargetArray(AActor* Actor)
 	}
 }
 
-double ASafeTowerBase::GetActorHealth(AActor* Actor) const
+double ASafeTowerBase::GetTargetHealth(AActor* Actor) const
 {
 	if (!IsValid(Actor))
 	{
 		return 0.0;
 	}
 
+	if (const AEnemyBase* Enemy = Cast<AEnemyBase>(Actor))
+	{
+		return Enemy->GetCurrentHealth();
+	}
+
+	// Fallback while Blueprints are still mid-transition.
 	if (const FDoubleProperty* HealthProp = FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("Health"))))
 	{
 		return HealthProp->GetPropertyValue_InContainer(Actor);
@@ -173,7 +203,6 @@ void ASafeTowerBase::RunSafeFire()
 
 	FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(this));
 
-	// Length > 0, then Is Valid Index 0, then cache CurrentTarget.
 	if (Helper.Num() <= 0 || !Helper.IsValidIndex(0))
 	{
 		CurrentTarget = nullptr;
@@ -191,8 +220,7 @@ void ASafeTowerBase::RunSafeFire()
 	AActor* TargetToDamage = CurrentTarget;
 	UGameplayStatics::ApplyDamage(TargetToDamage, 1.0f, nullptr, this, nullptr);
 
-	// Do not Get TargetArray[0] again after damage. Use the cached actor.
-	if (!IsValid(TargetToDamage) || GetActorHealth(TargetToDamage) <= 0.0)
+	if (!IsValid(TargetToDamage) || GetTargetHealth(TargetToDamage) <= 0.0)
 	{
 		RemoveActorFromTargetArray(TargetToDamage);
 		CurrentTarget = nullptr;

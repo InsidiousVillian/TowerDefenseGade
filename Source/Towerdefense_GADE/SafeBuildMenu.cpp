@@ -1,45 +1,85 @@
 #include "SafeBuildMenu.h"
 
-#include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/PanelWidget.h"
 #include "Components/TextBlock.h"
-#include "Components/Widget.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
+
+void USafeBuildMenu::NativeConstruct()
+{
+	Super::NativeConstruct();
+	BindBuyButtons();
+	CacheButtonLabels();
+	ApplyAffordability();
+}
 
 void USafeBuildMenu::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-
-	if (bBuyButtonsBound)
-	{
-		return;
-	}
-
-	bBuyButtonsBound = true;
-	BindBuyButtons();
+	// Refresh while open so buttons update when gold changes.
 	ApplyAffordability();
 }
 
 void USafeBuildMenu::BindBuyButtons()
 {
-	if (UButton* TowerButton = Cast<UButton>(GetWidgetFromName(TEXT("Buydefender"))))
+	if (Buydefender)
 	{
-		TowerButton->OnClicked.Clear();
-		TowerButton->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyTower);
+		Buydefender->OnClicked.Clear();
+		Buydefender->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyTower);
 	}
 
-	if (UButton* MortarButton = Cast<UButton>(GetWidgetFromName(TEXT("Buydefender_1"))))
+	if (Buydefender_1)
 	{
-		MortarButton->OnClicked.Clear();
-		MortarButton->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyMortar);
+		Buydefender_1->OnClicked.Clear();
+		Buydefender_1->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyMortar);
 	}
 
-	if (UButton* InfantryButton = Cast<UButton>(GetWidgetFromName(TEXT("Buydefender_2"))))
+	if (Buydefender_2)
 	{
-		InfantryButton->OnClicked.Clear();
-		InfantryButton->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyInfantry);
+		Buydefender_2->OnClicked.Clear();
+		Buydefender_2->OnClicked.AddDynamic(this, &USafeBuildMenu::BuyInfantry);
 	}
+}
+
+void USafeBuildMenu::CacheButtonLabels()
+{
+	OriginalButtonLabels.Reset();
+
+	const TArray<UButton*> Buttons = { Buydefender.Get(), Buydefender_1.Get(), Buydefender_2.Get() };
+	for (UButton* Button : Buttons)
+	{
+		if (UTextBlock* Label = FindLabelOnButton(Button))
+		{
+			OriginalButtonLabels.Add(Button, Label->GetText());
+		}
+	}
+}
+
+UTextBlock* USafeBuildMenu::FindLabelOnButton(UButton* Button) const
+{
+	if (!Button)
+	{
+		return nullptr;
+	}
+
+	if (UTextBlock* Direct = Cast<UTextBlock>(Button->GetContent()))
+	{
+		return Direct;
+	}
+
+	if (UPanelWidget* Panel = Cast<UPanelWidget>(Button->GetContent()))
+	{
+		for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+		{
+			if (UTextBlock* Child = Cast<UTextBlock>(Panel->GetChildAt(Index)))
+			{
+				return Child;
+			}
+		}
+	}
+
+	return nullptr;
 }
 
 void USafeBuildMenu::ApplyAffordability()
@@ -49,35 +89,39 @@ void USafeBuildMenu::ApplyAffordability()
 
 	struct FOffer
 	{
-		const TCHAR* WidgetName;
+		UButton* Button;
 		double Cost;
 	};
 
 	const FOffer Offers[] = {
-		{TEXT("Buydefender"), TowerCost},
-		{TEXT("Buydefender_1"), MortarCost},
-		{TEXT("Buydefender_2"), InfantryCost},
+		{Buydefender.Get(), TowerCost},
+		{Buydefender_1.Get(), MortarCost},
+		{Buydefender_2.Get(), InfantryCost},
 	};
 
 	for (const FOffer& Offer : Offers)
 	{
-		if (UButton* Button = Cast<UButton>(GetWidgetFromName(FName(Offer.WidgetName))))
+		if (!Offer.Button)
 		{
-			const bool bShow = bCanAffordAny && Gold + KINDA_SMALL_NUMBER >= Offer.Cost;
-			Button->SetIsEnabled(bShow);
-			Button->SetVisibility(bCanAffordAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+			continue;
 		}
-	}
 
-	if (!bCanAffordAny && WidgetTree)
-	{
-		WidgetTree->ForEachWidget([](UWidget* Widget)
+		const bool bCanAfford = bCanAffordAny && Gold + KINDA_SMALL_NUMBER >= Offer.Cost;
+		Offer.Button->SetIsEnabled(bCanAfford);
+		Offer.Button->SetVisibility(bCanAffordAny ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+		if (UTextBlock* Label = FindLabelOnButton(Offer.Button))
 		{
-			if (UTextBlock* Text = Cast<UTextBlock>(Widget))
+			if (!bCanAfford && bCanAffordAny)
 			{
-				Text->SetText(FText::FromString(TEXT("Not enough gold")));
+				// Only the unaffordable buy buttons — not every text block in the widget.
+				Label->SetText(FText::FromString(TEXT("Not enough gold")));
 			}
-		});
+			else if (const FText* Original = OriginalButtonLabels.Find(Offer.Button))
+			{
+				Label->SetText(*Original);
+			}
+		}
 	}
 }
 

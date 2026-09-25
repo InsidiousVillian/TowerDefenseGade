@@ -1,5 +1,6 @@
 #include "SafeGridGenerator.h"
 
+#include "EnemyBase.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SplineComponent.h"
 #include "Engine/World.h"
@@ -199,7 +200,11 @@ void ASafeGridGenerator::RunSafeSpawn()
 		return;
 	}
 
-	if (FObjectProperty* SplineProp = FindFProperty<FObjectProperty>(Spawned->GetClass(), FName(TEXT("TargetSpline"))))
+	if (AEnemyBase* Enemy = Cast<AEnemyBase>(Spawned))
+	{
+		Enemy->SetFollowSpline(Spline);
+	}
+	else if (FObjectProperty* SplineProp = FindFProperty<FObjectProperty>(Spawned->GetClass(), FName(TEXT("TargetSpline"))))
 	{
 		SplineProp->SetObjectPropertyValue_InContainer(Spawned, Spline);
 	}
@@ -362,9 +367,13 @@ void ASafeGridGenerator::SeparateSpawnFromExit()
 		}
 	}
 
-	auto GridToWorld = [TileSize](const FVector2D& Coord)
+	// Convert grid coords through the actor transform so meshes, sockets and the
+	// spline stay aligned when the generator is not at the world origin.
+	const FTransform ActorTM = GetActorTransform();
+	auto GridToWorld = [TileSize, &ActorTM](const FVector2D& Coord)
 	{
-		return FVector(Coord.X * TileSize, Coord.Y * TileSize, 0.0);
+		const FVector Local(Coord.X * TileSize, Coord.Y * TileSize, 0.0);
+		return ActorTM.TransformPosition(Local);
 	};
 
 	for (int32 Index = 0; Index < Path.Num(); ++Index)
@@ -381,7 +390,8 @@ void ASafeGridGenerator::SeparateSpawnFromExit()
 		}
 		if (Target)
 		{
-			Target->AddInstance(InstanceTransform, false);
+			// true = world space (matches spline points and socket spawns below).
+			Target->AddInstance(InstanceTransform, true);
 		}
 	}
 
@@ -406,7 +416,7 @@ void ASafeGridGenerator::SeparateSpawnFromExit()
 			{
 				if (Obstacle)
 				{
-					Obstacle->AddInstance(FTransform(Location), false);
+					Obstacle->AddInstance(FTransform(Location), true);
 				}
 			}
 			else if (World && SocketClass)
