@@ -25,7 +25,6 @@ void ASafeGridGenerator::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	ClearBlueprintSpawnTimer();
-	EnsureSafeSpawnTimer();
 }
 
 void ASafeGridGenerator::EndPlay(const EEndPlayReason::Type EndPlayReason)
