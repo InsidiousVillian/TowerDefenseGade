@@ -1,11 +1,222 @@
 #include "SafeGridGenerator.h"
 
+#include "SafeTowerBase.h"
+
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SplineComponent.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "UObject/UnrealType.h"
+
+namespace
+{
+	void WriteActorHealth(AActor* Actor, double Health)
+	{
+		if (FDoubleProperty* HealthProp = FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("Health"))))
+		{
+			HealthProp->SetPropertyValue_InContainer(Actor, Health);
+			return;
+		}
+
+		if (FFloatProperty* HealthProp = FindFProperty<FFloatProperty>(Actor->GetClass(), FName(TEXT("Health"))))
+		{
+			HealthProp->SetPropertyValue_InContainer(Actor, static_cast<float>(Health));
+		}
+	}
+
+	bool ActorHasHealth(const AActor* Actor)
+	{
+		return FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("Health")))
+			|| FindFProperty<FFloatProperty>(Actor->GetClass(), FName(TEXT("Health")));
+	}
+
+	bool StartingHealthFor(const AActor* Actor, double& OutHealth)
+	{
+		const FString Name = Actor->GetClass()->GetName();
+		if (Name.Contains(TEXT("Ranged")))
+		{
+			OutHealth = 75.0;
+		}
+		else if (Name.Contains(TEXT("Heavy")))
+		{
+			OutHealth = 140.0;
+		}
+		else if (Name.Contains(TEXT("Light_Enemy")) || Name.Contains(TEXT("BP_Enemy")))
+		{
+			OutHealth = 40.0;
+		}
+		else if (Name.Contains(TEXT("Mortar")))
+		{
+			OutHealth = 70.0;
+		}
+		else if (Name.Contains(TEXT("Infantry")))
+		{
+			OutHealth = 45.0;
+		}
+		else if (Actor->IsA(ASafeTowerBase::StaticClass()))
+		{
+			OutHealth = 120.0;
+		}
+		else
+		{
+			return false;
+		}
+
+		return ActorHasHealth(Actor);
+	}
+
+	float ShotDamageForDefender(const AActor* Actor)
+	{
+		const FString Name = Actor->GetClass()->GetName();
+		if (Name.Contains(TEXT("Mortar")))
+		{
+			return 35.0f;
+		}
+		if (Name.Contains(TEXT("Infantry")))
+		{
+			return 8.0f;
+		}
+		return 0.0f;
+	}
+
+	float ReadFireRate(const AActor* Actor)
+	{
+		if (const FDoubleProperty* RateProp = FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("FireRate"))))
+		{
+			return FMath::Max(0.05f, static_cast<float>(RateProp->GetPropertyValue_InContainer(Actor)));
+		}
+		if (const FFloatProperty* RateProp = FindFProperty<FFloatProperty>(Actor->GetClass(), FName(TEXT("FireRate"))))
+		{
+			return FMath::Max(0.05f, RateProp->GetPropertyValue_InContainer(Actor));
+		}
+		return 1.0f;
+	}
+
+	void ClearNamedTimer(AActor* Actor, const TCHAR* PropertyName)
+	{
+		FStructProperty* HandleProp = FindFProperty<FStructProperty>(Actor->GetClass(), FName(PropertyName));
+		if (!HandleProp || HandleProp->Struct != TBaseStructure<FTimerHandle>::Get())
+		{
+			return;
+		}
+
+		FTimerHandle* Handle = HandleProp->ContainerPtrToValuePtr<FTimerHandle>(Actor);
+		if (!Handle || !Handle->IsValid() || !Actor->GetWorld())
+		{
+			return;
+		}
+
+		Actor->GetWorld()->GetTimerManager().ClearTimer(*Handle);
+	}
+
+	double ReadActorHealth(const AActor* Actor)
+	{
+		if (const FDoubleProperty* HealthProp = FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("Health"))))
+		{
+			return HealthProp->GetPropertyValue_InContainer(Actor);
+		}
+		if (const FFloatProperty* HealthProp = FindFProperty<FFloatProperty>(Actor->GetClass(), FName(TEXT("Health"))))
+		{
+			return HealthProp->GetPropertyValue_InContainer(Actor);
+		}
+		return 1.0;
+	}
+
+	bool FireAtFirstTarget(AActor* Defender, float Damage)
+	{
+		FArrayProperty* ArrayProp = FindFProperty<FArrayProperty>(Defender->GetClass(), FName(TEXT("TargetArray")));
+		if (!ArrayProp)
+		{
+			return false;
+		}
+
+		FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(Defender));
+		const FObjectProperty* Inner = CastField<FObjectProperty>(ArrayProp->Inner);
+		if (!Inner || Helper.Num() <= 0 || !Helper.IsValidIndex(0))
+		{
+			return false;
+		}
+
+		AActor* Target = Cast<AActor>(Inner->GetObjectPropertyValue(Helper.GetRawPtr(0)));
+		if (!IsValid(Target))
+		{
+			Helper.RemoveValues(0);
+			return false;
+		}
+
+		UGameplayStatics::ApplyDamage(Target, Damage, nullptr, Defender, nullptr);
+		if (!IsValid(Target) || ReadActorHealth(Target) <= 0.0)
+		{
+			for (int32 Index = Helper.Num() - 1; Index >= 0; --Index)
+			{
+				AActor* Existing = Cast<AActor>(Inner->GetObjectPropertyValue(Helper.GetRawPtr(Index)));
+				if (Existing == Target || !IsValid(Existing))
+				{
+					Helper.RemoveValues(Index);
+				}
+			}
+		}
+
+		return true;
+	}
+
+	float EnemyStrikeDamage(const AActor* Actor)
+	{
+		const FString Name = Actor->GetClass()->GetName();
+		if (Name.Contains(TEXT("Ranged")))
+		{
+			return 12.0f;
+		}
+		if (Name.Contains(TEXT("Heavy")))
+		{
+			return 18.0f;
+		}
+		if (Name.Contains(TEXT("Light_Enemy")) || Name.Contains(TEXT("BP_Enemy")))
+		{
+			return 8.0f;
+		}
+		return 0.0f;
+	}
+
+	bool EnemyIsAttacking(const AActor* Actor)
+	{
+		const FBoolProperty* AttackingProp = FindFProperty<FBoolProperty>(Actor->GetClass(), FName(TEXT("isAttacking?")));
+		if (!AttackingProp)
+		{
+			AttackingProp = FindFProperty<FBoolProperty>(Actor->GetClass(), FName(TEXT("isAttacking")));
+		}
+		if (!AttackingProp)
+		{
+			return true;
+		}
+		return AttackingProp->GetPropertyValue_InContainer(Actor);
+	}
+
+	bool StrikeTargetTower(AActor* Enemy, float Damage)
+	{
+		if (!EnemyIsAttacking(Enemy))
+		{
+			return false;
+		}
+
+		const FObjectProperty* TargetProp = FindFProperty<FObjectProperty>(Enemy->GetClass(), FName(TEXT("TargetTower")));
+		if (!TargetProp)
+		{
+			return false;
+		}
+
+		AActor* Target = Cast<AActor>(TargetProp->GetObjectPropertyValue_InContainer(Enemy));
+		if (!IsValid(Target))
+		{
+			return false;
+		}
+
+		UGameplayStatics::ApplyDamage(Target, Damage, nullptr, Enemy, nullptr);
+		return true;
+	}
+}
 
 ASafeGridGenerator::ASafeGridGenerator()
 {
@@ -25,6 +236,87 @@ void ASafeGridGenerator::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	ClearBlueprintSpawnTimer();
+	ApplyDistinctCombatStats(DeltaSeconds);
+}
+
+void ASafeGridGenerator::ApplyDistinctCombatStats(float DeltaSeconds)
+{
+	for (auto It = StatsAssigned.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (auto It = DefenderShotCooldown.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (auto It = EnemyStrikeCooldown.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!IsValid(Actor) || Actor == this)
+		{
+			continue;
+		}
+
+		if (!StatsAssigned.Contains(Actor))
+		{
+			double Health = 0.0;
+			if (StartingHealthFor(Actor, Health))
+			{
+				WriteActorHealth(Actor, Health);
+				StatsAssigned.Add(Actor);
+			}
+		}
+
+		const float DefenderDamage = ShotDamageForDefender(Actor);
+		if (DefenderDamage > 0.0f)
+		{
+			if (Actor->GetClass()->GetName().Contains(TEXT("Infantry")))
+			{
+				ClearNamedTimer(Actor, TEXT("FireTimerHandle"));
+			}
+
+			float& Cooldown = DefenderShotCooldown.FindOrAdd(Actor, 0.0f);
+			Cooldown -= DeltaSeconds;
+			if (Cooldown <= 0.0f && FireAtFirstTarget(Actor, DefenderDamage))
+			{
+				Cooldown = ReadFireRate(Actor);
+			}
+		}
+
+		const float EnemyDamage = EnemyStrikeDamage(Actor);
+		if (EnemyDamage <= 0.0f)
+		{
+			continue;
+		}
+
+		ClearNamedTimer(Actor, TEXT("AttackTimerHandle"));
+		float& StrikeCooldown = EnemyStrikeCooldown.FindOrAdd(Actor, 0.0f);
+		StrikeCooldown -= DeltaSeconds;
+		if (StrikeCooldown <= 0.0f && StrikeTargetTower(Actor, EnemyDamage))
+		{
+			StrikeCooldown = 1.0f;
+		}
+	}
 }
 
 void ASafeGridGenerator::EndPlay(const EEndPlayReason::Type EndPlayReason)

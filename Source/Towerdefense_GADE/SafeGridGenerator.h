@@ -32,6 +32,7 @@ public:
 
 protected:
 	void ClearBlueprintSpawnTimer();
+	void ApplyDistinctCombatStats(float DeltaSeconds);
 	void EnsureSafeSpawnTimer();
 	void SeparateSpawnFromExit();
 	float GetSpawnInterval() const;
@@ -44,4 +45,7 @@ protected:
 
 	FTimerHandle SafeSpawnTimerHandle;
 	float LastSpawnInterval = -1.0f;
+	TSet<TWeakObjectPtr<AActor>> StatsAssigned;
+	TMap<TWeakObjectPtr<AActor>, float> DefenderShotCooldown;
+	TMap<TWeakObjectPtr<AActor>, float> EnemyStrikeCooldown;
 };

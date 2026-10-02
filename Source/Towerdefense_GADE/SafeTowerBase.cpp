@@ -189,7 +189,17 @@ void ASafeTowerBase::RunSafeFire()
 	}
 
 	AActor* TargetToDamage = CurrentTarget;
-	UGameplayStatics::ApplyDamage(TargetToDamage, 1.0f, nullptr, this, nullptr);
+	float ShotDamage = 12.0f;
+	const FString ClassName = GetClass()->GetName();
+	if (ClassName.Contains(TEXT("Mortar")))
+	{
+		ShotDamage = 35.0f;
+	}
+	else if (ClassName.Contains(TEXT("Infantry")))
+	{
+		ShotDamage = 8.0f;
+	}
+	UGameplayStatics::ApplyDamage(TargetToDamage, ShotDamage, nullptr, this, nullptr);
 
 	// Do not Get TargetArray[0] again after damage. Use the cached actor.
 	if (!IsValid(TargetToDamage) || GetActorHealth(TargetToDamage) <= 0.0)
