@@ -35,8 +35,8 @@ Build/
 # Marketplace demo map exceeds GitHub's 100MB file limit
 Content/Stylized_PBR_Nature/Maps/Stylized_Nature_ExampleScene.umap
 
-# Paragon character packs are several gigabytes and GitHub drops that upload.
-# Keep Countess, Crunch, and Drongo on disk. Download them from Fab on a new machine.
+# The rest of each Paragon pack stays on this machine. The meshes, clips, and
+# textures the enemies use are tracked so a clone can play those characters.
 Content/ParagonCountess/
 Content/ParagonCrunch/
 Content/ParagonDrongo/
