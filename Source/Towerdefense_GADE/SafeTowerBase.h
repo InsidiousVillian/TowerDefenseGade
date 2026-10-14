@@ -29,6 +29,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat")
 	void RunSafeFire();
 
+	/** Clears the shot timer and starts it again from the FireRate variable. */
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void RestartFireTimer();
+
 protected:
 	void ClearBlueprintFireTimer();
 	void EnsureSafeFireTimer();

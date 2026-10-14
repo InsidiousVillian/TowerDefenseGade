@@ -61,17 +61,26 @@ void ASafeTowerBase::ClearBlueprintFireTimer()
 
 float ASafeTowerBase::GetBlueprintFireRate() const
 {
+	float Rate = 1.0f;
 	if (const FDoubleProperty* RateProp = FindFProperty<FDoubleProperty>(GetClass(), FName(TEXT("FireRate"))))
 	{
-		return FMath::Max(0.05f, static_cast<float>(RateProp->GetPropertyValue_InContainer(this)));
+		Rate = static_cast<float>(RateProp->GetPropertyValue_InContainer(this));
 	}
-
-	if (const FFloatProperty* RateProp = FindFProperty<FFloatProperty>(GetClass(), FName(TEXT("FireRate"))))
+	else if (const FFloatProperty* FloatRateProp = FindFProperty<FFloatProperty>(GetClass(), FName(TEXT("FireRate"))))
 	{
-		return FMath::Max(0.05f, RateProp->GetPropertyValue_InContainer(this));
+		Rate = FloatRateProp->GetPropertyValue_InContainer(this);
 	}
 
-	return 1.0f;
+	return FMath::Max(0.05f, Rate);
+}
+
+void ASafeTowerBase::RestartFireTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(SafeFireTimerHandle);
+	}
+	EnsureSafeFireTimer();
 }
 
 void ASafeTowerBase::EnsureSafeFireTimer()
@@ -198,6 +207,22 @@ void ASafeTowerBase::RunSafeFire()
 	else if (ClassName.Contains(TEXT("Infantry")))
 	{
 		ShotDamage = 8.0f;
+	}
+	if (const FDoubleProperty* DamageProp = FindFProperty<FDoubleProperty>(GetClass(), FName(TEXT("Damage"))))
+	{
+		const double Value = DamageProp->GetPropertyValue_InContainer(this);
+		if (Value > 0.0)
+		{
+			ShotDamage = static_cast<float>(Value);
+		}
+	}
+	else if (const FFloatProperty* FloatDamageProp = FindFProperty<FFloatProperty>(GetClass(), FName(TEXT("Damage"))))
+	{
+		const float Value = FloatDamageProp->GetPropertyValue_InContainer(this);
+		if (Value > 0.0f)
+		{
+			ShotDamage = Value;
+		}
 	}
 	UGameplayStatics::ApplyDamage(TargetToDamage, ShotDamage, nullptr, this, nullptr);
 
