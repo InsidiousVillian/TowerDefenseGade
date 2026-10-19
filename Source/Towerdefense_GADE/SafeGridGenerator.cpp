@@ -70,15 +70,34 @@ namespace
 	float ShotDamageForDefender(const AActor* Actor)
 	{
 		const FString Name = Actor->GetClass()->GetName();
+		float ShotDamage = 0.0f;
 		if (Name.Contains(TEXT("Mortar")))
 		{
-			return 35.0f;
+			ShotDamage = 35.0f;
 		}
-		if (Name.Contains(TEXT("Infantry")))
+		else if (Name.Contains(TEXT("Infantry")))
 		{
-			return 8.0f;
+			ShotDamage = 8.0f;
 		}
-		return 0.0f;
+
+		if (const FDoubleProperty* DamageProp = FindFProperty<FDoubleProperty>(Actor->GetClass(), FName(TEXT("Damage"))))
+		{
+			const double Value = DamageProp->GetPropertyValue_InContainer(Actor);
+			if (Value > 0.0)
+			{
+				ShotDamage = static_cast<float>(Value);
+			}
+		}
+		else if (const FFloatProperty* FloatDamageProp = FindFProperty<FFloatProperty>(Actor->GetClass(), FName(TEXT("Damage"))))
+		{
+			const float Value = FloatDamageProp->GetPropertyValue_InContainer(Actor);
+			if (Value > 0.0f)
+			{
+				ShotDamage = Value;
+			}
+		}
+
+		return ShotDamage;
 	}
 
 	float ReadFireRate(const AActor* Actor)
