@@ -225,6 +225,7 @@ void ASafeTowerBase::RunSafeFire()
 		}
 	}
 	UGameplayStatics::ApplyDamage(TargetToDamage, ShotDamage, nullptr, this, nullptr);
+	PlayShotEffect();
 
 	// Do not Get TargetArray[0] again after damage. Use the cached actor.
 	if (!IsValid(TargetToDamage) || GetActorHealth(TargetToDamage) <= 0.0)

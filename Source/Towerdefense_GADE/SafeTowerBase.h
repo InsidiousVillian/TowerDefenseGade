@@ -29,6 +29,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat")
 	void RunSafeFire();
 
+	/** Fired after a shot lands. The tower Blueprint spawns the shot effect here. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Combat")
+	void PlayShotEffect();
+
 	/** Clears the shot timer and starts it again from the FireRate variable. */
 	UFUNCTION(BlueprintCallable, Category = "Combat")
 	void RestartFireTimer();
