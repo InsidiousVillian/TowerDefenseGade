@@ -67,6 +67,22 @@ namespace
 		return ActorHasHealth(Actor);
 	}
 
+	bool IsSpawnedEnemy(const AActor* Actor)
+	{
+		const FString Name = Actor->GetClass()->GetName();
+		return Name.Contains(TEXT("Ranged"))
+			|| Name.Contains(TEXT("Heavy"))
+			|| Name.Contains(TEXT("Light_Enemy"))
+			|| Name.Contains(TEXT("BP_Enemy"));
+	}
+
+	double HealthForWave(double BaseHealth, int32 WaveNumber)
+	{
+		const int32 WavesAfterFirst = FMath::Max(0, WaveNumber - 1);
+		const double Scale = FMath::Min(2.0, 1.0 + 0.15 * static_cast<double>(WavesAfterFirst));
+		return BaseHealth * Scale;
+	}
+
 	float ShotDamageForDefender(const AActor* Actor)
 	{
 		const FString Name = Actor->GetClass()->GetName();
@@ -301,6 +317,10 @@ void ASafeGridGenerator::ApplyDistinctCombatStats(float DeltaSeconds)
 			double Health = 0.0;
 			if (StartingHealthFor(Actor, Health))
 			{
+				if (IsSpawnedEnemy(Actor))
+				{
+					Health = HealthForWave(Health, ReadIntProperty(FName(TEXT("waveNumber")), 1));
+				}
 				WriteActorHealth(Actor, Health);
 				StatsAssigned.Add(Actor);
 			}

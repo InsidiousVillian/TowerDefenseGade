@@ -1,8 +1,166 @@
 #include "SafeTowerBase.h"
 
+#include "Animation/AnimSequence.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "UObject/UObjectIterator.h"
 #include "UObject/UnrealType.h"
+
+namespace
+{
+	void DestroyNiagaraComponent(UActorComponent* Comp)
+	{
+		if (!IsValid(Comp))
+		{
+			return;
+		}
+
+		if (UFunction* Deactivate = Comp->FindFunction(FName(TEXT("DeactivateImmediate"))))
+		{
+			Comp->ProcessEvent(Deactivate, nullptr);
+		}
+		Comp->DestroyComponent();
+	}
+
+	void DestroyNiagaraOnActor(AActor* Actor)
+	{
+		if (!IsValid(Actor))
+		{
+			return;
+		}
+
+		TInlineComponentArray<UActorComponent*> Components;
+		Actor->GetComponents(Components);
+		TArray<UActorComponent*> Pending;
+		for (UActorComponent* Comp : Components)
+		{
+			if (Comp && Comp->GetClass()->GetName().Contains(TEXT("Niagara")))
+			{
+				Pending.Add(Comp);
+			}
+		}
+		for (UActorComponent* Comp : Pending)
+		{
+			DestroyNiagaraComponent(Comp);
+		}
+	}
+
+	void ResumeWalkAfterAttack(AActor* Enemy)
+	{
+		USkeletalMeshComponent* Mesh = Enemy->FindComponentByClass<USkeletalMeshComponent>();
+		if (!Mesh)
+		{
+			return;
+		}
+
+		const UAnimationAsset* Current = Mesh->AnimationData.AnimToPlay;
+		if (!Current || !Current->GetName().Contains(TEXT("Attack")))
+		{
+			return;
+		}
+
+		const FString Name = Enemy->GetClass()->GetName();
+		const TCHAR* Path = TEXT("/Game/ParagonCountess/Characters/Heroes/Countess/Animations/Jog_Fwd.Jog_Fwd");
+		if (Name.Contains(TEXT("Ranged")))
+		{
+			Path = TEXT("/Game/ParagonDrongo/Characters/Heroes/Drongo/Animations/Boomerang_Jog_Fwd.Boomerang_Jog_Fwd");
+		}
+		else if (Name.Contains(TEXT("Heavy")))
+		{
+			Path = TEXT("/Game/ParagonCrunch/Characters/Heroes/Crunch/Animations/Jog_Fwd.Jog_Fwd");
+		}
+
+		if (UAnimSequence* Jog = LoadObject<UAnimSequence>(nullptr, Path))
+		{
+			Mesh->PlayAnimation(Jog, true);
+		}
+		else
+		{
+			Mesh->Stop();
+		}
+	}
+
+	void ReleaseEnemiesAttacking(AActor* Tower)
+	{
+		UWorld* World = Tower->GetWorld();
+		if (!World)
+		{
+			return;
+		}
+
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Enemy = *It;
+			if (!IsValid(Enemy) || Enemy == Tower)
+			{
+				continue;
+			}
+
+			FObjectProperty* TargetProp = FindFProperty<FObjectProperty>(Enemy->GetClass(), FName(TEXT("TargetTower")));
+			if (!TargetProp)
+			{
+				continue;
+			}
+
+			if (Cast<AActor>(TargetProp->GetObjectPropertyValue_InContainer(Enemy)) != Tower)
+			{
+				continue;
+			}
+
+			FBoolProperty* AttackingProp = FindFProperty<FBoolProperty>(Enemy->GetClass(), FName(TEXT("isAttacking?")));
+			if (!AttackingProp)
+			{
+				AttackingProp = FindFProperty<FBoolProperty>(Enemy->GetClass(), FName(TEXT("isAttacking")));
+			}
+			if (AttackingProp)
+			{
+				AttackingProp->SetPropertyValue_InContainer(Enemy, false);
+			}
+			TargetProp->SetObjectPropertyValue_InContainer(Enemy, nullptr);
+			ResumeWalkAfterAttack(Enemy);
+			DestroyNiagaraOnActor(Enemy);
+		}
+	}
+
+	void DestroyLooseEffectsAt(UWorld* World, const FVector& Origin)
+	{
+		UClass* NiagaraClass = FindObject<UClass>(nullptr, TEXT("/Script/Niagara.NiagaraComponent"));
+		if (!World || !NiagaraClass)
+		{
+			return;
+		}
+
+		TArray<UActorComponent*> Pending;
+		for (TObjectIterator<UActorComponent> It; It; ++It)
+		{
+			UActorComponent* Comp = *It;
+			if (!IsValid(Comp) || Comp->IsTemplate() || !Comp->IsA(NiagaraClass))
+			{
+				continue;
+			}
+
+			const USceneComponent* Scene = Cast<USceneComponent>(Comp);
+			if (!Scene || Scene->GetWorld() != World)
+			{
+				continue;
+			}
+			const FVector Delta = Scene->GetComponentLocation() - Origin;
+			const double HorizontalSq = Delta.X * Delta.X + Delta.Y * Delta.Y;
+			if (HorizontalSq > FMath::Square(80.0))
+			{
+				continue;
+			}
+			Pending.Add(Comp);
+		}
+
+		for (UActorComponent* Comp : Pending)
+		{
+			DestroyNiagaraComponent(Comp);
+		}
+	}
+}
 
 ASafeTowerBase::ASafeTowerBase()
 {
@@ -26,6 +184,11 @@ void ASafeTowerBase::Tick(float DeltaSeconds)
 
 void ASafeTowerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	const FVector Origin = GetActorLocation();
+	ReleaseEnemiesAttacking(this);
+	DestroyNiagaraOnActor(this);
+	DestroyLooseEffectsAt(GetWorld(), Origin);
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(SafeFireTimerHandle);
